@@ -5,6 +5,15 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import multer from "multer";
+import mysql from 'mysql2/promise';
+
+// Create MySQL connection pool
+const pool = mysql.createPool({
+  host: 'localhost',
+  user: 'root', 
+  password: 'Rawmason@2023', 
+  database: 'blog', 
+});
 
 const app = express();
 app.use(express.json());
@@ -16,7 +25,6 @@ const PORT = 4000;
 // Convert import.meta.url to a file path
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const postsFilePath = path.join(__dirname, 'posts.json');
 
 // Setup multer for file uploads
 const storage = multer.diskStorage({
@@ -29,64 +37,62 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// Helper function to read posts from the file
-const readPostsFromFile = () => {
-  if (fs.existsSync(postsFilePath)) {
-    const data = fs.readFileSync(postsFilePath, 'utf-8');
-    return JSON.parse(data);
-  }
-  return [];
-};
-
-// Helper function to write posts to the file
-const writePostsToFile = (posts) => {
-  fs.writeFileSync(postsFilePath, JSON.stringify(posts, null, 2));
-};
-
-// Initialize posts from the file
-let posts = readPostsFromFile();
-
 // Create a new blog post
-app.post("/api/posts", upload.single('image'), (req, res) => {
+app.post("/api/posts", upload.single('image'), async (req, res) => {
   const { title, content } = req.body;
   const imageUrl = req.file ? `http://localhost:${PORT}/uploads/${req.file.filename}` : null;
-  const newPost = {
-    id: shortid.generate(),
-    title,
-    content,
-    image: imageUrl
-  };
-  posts.push(newPost);
-  writePostsToFile(posts);
-  res.status(201).json(newPost);
+
+  try {
+    const [result] = await pool.query('INSERT INTO posts (title, content, image) VALUES (?, ?, ?)', [title, content, imageUrl]);
+    const newPost = {
+      id: result.insertId,
+      title,
+      content,
+      image: imageUrl
+    };
+    res.status(201).json(newPost);
+  } catch (err) {
+    res.status(500).json({ message: "Database error", error: err });
+  }
 });
 
 // Get all blog posts
-app.get("/api/posts", (req, res) => {
-  res.status(200).json(posts);
+app.get("/api/posts", async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM posts');
+    res.status(200).json(rows);
+  } catch (err) {
+    res.status(500).json({ message: "Database error", error: err });
+  }
 });
 
 // Get a single blog post by ID
-app.get("/api/posts/:id", (req, res) => {
+app.get("/api/posts/:id", async (req, res) => {
   const { id } = req.params;
-  const found = posts.find((post) => post.id === id); 
-  if (found) {
-    res.status(200).json(found);
-  } else {
-    res.status(404).json({ message: "Post does not exist" });
+  try {
+    const [rows] = await pool.query('SELECT * FROM posts WHERE id = ?', [id]);
+    if (rows.length > 0) {
+      res.status(200).json(rows[0]);
+    } else {
+      res.status(404).json({ message: "Post does not exist" });
+    }
+  } catch (err) {
+    res.status(500).json({ message: "Database error", error: err });
   }
 });
 
 // Delete a blog post by ID
-app.delete("/api/posts/:id", (req, res) => {
+app.delete("/api/posts/:id", async (req, res) => {
   const { id } = req.params;
-  const index = posts.findIndex((post) => post.id === id);
-  if (index !== -1) {
-    const deletedPost = posts.splice(index, 1);
-    writePostsToFile(posts);
-    res.status(200).json(deletedPost);
-  } else {
-    res.status(404).json({ message: "Post not found" });
+  try {
+    const [result] = await pool.query('DELETE FROM posts WHERE id = ?', [id]);
+    if (result.affectedRows > 0) {
+      res.status(200).json({ message: "Post deleted successfully" });
+    } else {
+      res.status(404).json({ message: "Post not found" });
+    }
+  } catch (err) {
+    res.status(500).json({ message: "Database error", error: err });
   }
 });
 
